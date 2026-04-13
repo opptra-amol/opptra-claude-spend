@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Opptra — Claude Enterprise Usage Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@300;600;700&family=Raleway:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #131A48;
+  --orange: #FF5800;
+  --orange-hover: #FF8C4F;
+  --yellow: #FFFCE8;
+  --grey: #5A5A5A;
+  --grey-light: #CECECE;
+  --white: #FFFFFF;
+  --bg: #f8f9fb;
+  --font-h: 'Spectral', Georgia, serif;
+  --font-b: 'Raleway', 'Segoe UI', sans-serif;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: var(--font-b); background: var(--bg); color: var(--navy); }
+
+/* Loading */
+#loading { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; gap:16px; }
+#loading .spinner { width:40px; height:40px; border:3px solid var(--grey-light); border-top-color:var(--orange); border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#loading p { font-size:13px; color:var(--grey); }
+
+#app { display:none; }
+
+/* Header */
+.header { background:var(--navy); padding:20px 32px 0; }
+.header-top { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding-bottom:16px; }
+.header-logo { display:flex; align-items:center; gap:16px; }
+.header-logo img { height:32px; filter:brightness(0) invert(1); }
+.header-logo h1 { font-family:var(--font-h); color:#fff; font-size:22px; font-weight:600; letter-spacing:-0.02em; }
+.header-logo .sub { color:var(--orange-hover); font-size:12px; font-weight:500; margin-top:2px; }
+.header-filters { display:flex; gap:8px; flex-wrap:wrap; }
+.header-filters select, .header-filters input {
+  padding:6px 12px; border-radius:6px; border:1px solid var(--orange);
+  background:transparent; color:#fff; font-size:12px; cursor:pointer; font-family:var(--font-b);
+}
+.header-filters select option { color:var(--navy); }
+.header-filters input::placeholder { color:rgba(255,255,255,0.4); }
+
+/* Tabs */
+.tabs { display:flex; gap:0; }
+.tab-btn {
+  padding:10px 24px; font-size:13px; font-weight:400; color:rgba(255,255,255,0.6);
+  background:transparent; border:none; border-radius:8px 8px 0 0; cursor:pointer;
+  transition:all 0.2s; font-family:var(--font-b); letter-spacing:0.01em;
+}
+.tab-btn.active { font-weight:600; color:var(--navy); background:var(--bg); }
+
+/* Content */
+.content { padding:20px 28px; max-width:1200px; margin:0 auto; }
+
+/* Cards */
+.kpi-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:24px; }
+.kpi-card { background:#fff; border-radius:10px; padding:16px 18px; box-shadow:0 1px 4px rgba(0,0,0,0.06); border:1px solid #eee; }
+.kpi-card.accent { background:var(--navy); border:none; }
+.kpi-label { font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:0.04em; color:var(--grey); }
+.kpi-card.accent .kpi-label { color:var(--orange-hover); }
+.kpi-value { font-family:var(--font-h); font-size:26px; font-weight:700; color:var(--navy); margin:6px 0 2px; letter-spacing:-0.02em; }
+.kpi-card.accent .kpi-value { color:#fff; }
+.kpi-sub { font-size:11px; color:var(--grey-light); }
+.kpi-card.accent .kpi-sub { color:rgba(255,255,255,0.5); }
+
+/* Two-col */
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+@media (max-width:768px) { .two-col { grid-template-columns:1fr; } }
+@media (max-width:768px) {
+  .header { padding:16px 16px 0; }
+  .header-top { gap:10px; }
+  .header-logo h1 { font-size:16px; }
+  .header-logo img { height:24px; }
+  .header-filters { width:100%; }
+  .header-filters select, .header-filters input { flex:1; min-width:0; font-size:11px; padding:5px 8px; }
+  .content { padding:14px 12px; }
+  .kpi-grid { grid-template-columns:repeat(2, 1fr); gap:10px; }
+  .kpi-value { font-size:20px; }
+  .kpi-label { font-size:10px; }
+  .panel { padding:14px 12px; }
+  .panel h2 { font-size:14px; }
+  table { font-size:11px; }
+  th, td { padding:5px 6px; }
+  .tabs { overflow-x:auto; }
+  .tab-btn { padding:8px 16px; font-size:12px; white-space:nowrap; }
+  .filter-btns { gap:4px; }
+  .filter-btn { padding:4px 10px; font-size:10px; }
+}
+
+/* Panel */
+.panel { background:#fff; border-radius:10px; padding:18px 20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); border:1px solid #eee; margin-bottom:24px; }
+.panel h2 { font-family:var(--font-h); font-size:16px; font-weight:600; color:var(--navy); margin-bottom:14px; }
+
+/* Bar */
+.bar-row { margin-bottom:10px; }
+.bar-label { display:flex; justify-content:space-between; font-size:12px; margin-bottom:3px; }
+.bar-label span:first-child { font-weight:500; color:var(--navy); }
+.bar-label span:last-child { color:var(--grey); }
+.bar-track { height:8px; background:#f0f0f0; border-radius:4px; overflow:hidden; }
+.bar-fill { height:100%; border-radius:4px; transition:width 0.5s ease; }
+
+/* Table */
+table { width:100%; border-collapse:collapse; font-size:12px; }
+thead tr { border-bottom:2px solid var(--navy); }
+th { text-align:left; padding:8px 10px; color:var(--navy); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; }
+th.sortable { cursor:pointer; }
+th.right, td.right { text-align:right; }
+td { padding:7px 10px; }
+tbody tr { border-bottom:1px solid #f5f5f5; }
+tbody tr:nth-child(even) { background:#fafbfc; }
+.tag { padding:2px 8px; border-radius:4px; font-size:10px; font-weight:600; display:inline-block; }
+.tag-topup { background:var(--yellow); color:#ca8a04; }
+.tag-onboard { background:#eef6ff; color:#2563eb; }
+.tag-seat { background:#fef2f2; color:#dc2626; }
+.dept-tag { padding:2px 6px; border-radius:3px; font-size:10px; font-weight:500; }
+.spend-val { font-weight:600; font-family:var(--font-h); font-size:14px; }
+.spend-high { color:var(--orange); }
+.limit-unlimited { color:var(--orange); font-weight:600; }
+.sum-row { border-top:2px solid var(--navy); background:#f8f9fb; }
+.sum-row td { padding:10px 10px; font-weight:700; color:var(--navy); font-size:12px; }
+
+/* Filter buttons */
+.filter-btns { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.filter-btn {
+  padding:5px 14px; border-radius:6px; border:1px solid var(--grey-light); background:#fff;
+  color:var(--grey); font-size:11px; font-weight:400; cursor:pointer; transition:all 0.15s; font-family:var(--font-b);
+}
+.filter-btn.active-orange { border:2px solid var(--orange); background:var(--yellow); color:var(--orange); font-weight:600; }
+.filter-btn.active-navy { border:2px solid var(--navy); background:var(--navy); color:#fff; font-weight:600; }
+.filter-sep { width:1px; background:#eee; height:20px; margin:0 4px; }
+
+.toggle-btn {
+  padding:8px 24px; border-radius:6px; border:1px solid var(--navy); background:transparent;
+  color:var(--navy); font-size:12px; font-weight:500; cursor:pointer; transition:all 0.2s; font-family:var(--font-b);
+}
+.toggle-btn.active { background:var(--navy); color:#fff; }
+
+.mini-bar { height:6px; background:#f0f0f0; border-radius:3px; overflow:hidden; min-width:80px; }
+.mini-bar-fill { height:100%; border-radius:3px; transition:width 0.4s ease; }
+
+.footer { text-align:center; padding:20px 0 8px; font-size:11px; color:var(--grey-light); }
+.error-msg { text-align:center; padding:60px 20px; color:#dc2626; font-size:14px; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <p>Loading live data from Google Sheets...</p>
+</div>
+
+<div id="app">
+  <div class="header">
+    <div class="header-top">
+      <div class="header-logo">
+        <img src="https://cdn.prod.website-files.com/67a44396c211269f785f9dfe/67a4a8650573be9ae072ae9e_Opptra-logo.svg" alt="Opptra">
+        <div>
+          <h1>Claude Enterprise — Usage Dashboard</h1>
+          <div class="sub" id="dateLabel">Loading...</div>
+        </div>
+      </div>
+      <div class="header-filters" id="usageFilters">
+        <select id="deptFilter"><option value="All">All Departments</option></select>
+        <select id="locFilter"><option value="All">All Locations</option></select>
+        <input id="searchInput" placeholder="Search user..." style="width:140px">
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="usage">Usage Overview</button>
+      <button class="tab-btn" data-tab="investment">Investment Tracker</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div id="tab-usage"></div>
+    <div id="tab-investment" style="display:none"></div>
+    <div class="footer">Opptra IT · Claude Enterprise Usage Dashboard · Live from Google Sheets</div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ─────────────────────────────────────────────────────────────────────
+const SHEET_ID = '15x-QCW7ks7U3b6LcTFgrRv1MQhin_YunD-yoTVcWwzA';
+
+const DEPT_COLORS = {
+  "Hardlines":"#131A48","Softlines":"#FF5800","Supply Chain":"#2563eb",
+  "Finance & Legal":"#16a34a","Product & Tech":"#9333ea","HR & TA & Admin":"#dc2626","FamilyOffice":"#ca8a04"
+};
+
+const fmt = v => "$" + Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+// ─── JSONP LOADER (bypasses CORS — works from file:// and any origin) ───────────
+let _jsonpCounter = 0;
+function loadSheetJSONP(sheetName) {
+  return new Promise((resolve, reject) => {
+    const cbName = '_gvizCb' + (++_jsonpCounter);
+    const timeout = setTimeout(() => { reject(new Error('Timeout loading "' + sheetName + '"')); delete window[cbName]; }, 15000);
+
+    window[cbName] = function(response) {
+      clearTimeout(timeout);
+      delete window[cbName];
+      const script = document.getElementById(cbName);
+      if (script) script.remove();
+
+      if (response.status === 'error') {
+        reject(new Error('Sheet "' + sheetName + '": ' + (response.errors?.[0]?.detailed_message || 'unknown error')));
+        return;
+      }
+
+      // Parse the Google Visualization DataTable response into simple arrays
+      const table = response.table;
+      const headers = table.cols.map(c => c.label || c.id || '');
+      const rows = table.rows.map(r => r.c.map(cell => {
+        if (!cell) return '';
+        // Google returns {v: value, f: formatted} — prefer f (formatted) for display, fall back to v
+        return cell.f != null ? cell.f : (cell.v != null ? String(cell.v) : '');
+      }));
+      resolve({ headers, rows });
+    };
+
+    const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=responseHandler:${cbName}&sheet=${encodeURIComponent(sheetName)}`;
+    const script = document.createElement('script');
+    script.id = cbName;
+    script.src = url;
+    script.onerror = () => { clearTimeout(timeout); reject(new Error('Network error loading "' + sheetName + '"')); };
+    document.head.appendChild(script);
+  });
+}
+
+// ─── STATE ──────────────────────────────────────────────────────────────────────
+let STATE = {
+  employees: [], billing: [], usage: [], asOfDate: '',
+  activeTab: 'usage', deptFilter: 'All', locFilter: 'All', search: '',
+  billingDateFilter: 'All', billingTypeFilter: 'All',
+  showAll: false, sortBy: 'spend', sortDir: 'desc'
+};
+
+// ─── LOAD DATA ──────────────────────────────────────────────────────────────────
+async function loadData() {
+  try {
+    document.querySelector('#loading p').textContent = 'Fetching data from Google Sheets...';
+
+    // Fetch all 3 sheets in parallel via JSONP
+    const [empData, billingData, usageData] = await Promise.all([
+      loadSheetJSONP('Employee Master'),
+      loadSheetJSONP('CreditTopUps'),
+      loadSheetJSONP('AsOfDateUsage')
+    ]);
+
+    // Parse employees — use position-based mapping since gviz headers can be unreliable
+    // Employee Master columns: A=Name, B=Email ID, C=Department, D=Employment Type, E=Location, F=Claude Access
+    STATE.employees = empData.rows.map(r => {
+      // Try header-based first, fall back to position-based
+      const obj = {};
+      empData.headers.forEach((h, i) => obj[h] = (r[i] || '').trim());
+      // Position-based override — these are the guaranteed column positions
+      return {
+        name: (r[0] || '').trim(),
+        email: (r[1] || '').trim().toLowerCase(),
+        department: (r[2] || '').trim(),
+        employmentType: (r[3] || '').trim(),
+        location: (r[4] || '').trim(),
+        claudeAccess: (r[5] || '').trim(),
+        _raw: obj // keep header-based version as fallback
+      };
+    }).filter(e => e.email);
+
+    // Parse billing — position-based: A=Date, B=Seats Count, C=Amount in USD, D=Reason
+    STATE.billing = billingData.rows.map(r => ({
+      date: (r[0] || '').trim(),
+      seats: parseInt(r[1] || '0') || null,
+      amount: parseFloat((r[2] || '0').replace(/[$,]/g, '')) || 0,
+      reason: (r[3] || '').trim()
+    })).filter(b => b.amount > 0);
+
+    // Parse usage — Sheet structure:
+    // Row 1: A1 = "As of Date" or blank, B1 = date value (e.g. "14-Apr")
+    // Row 2: Headers — Name, Custom spend limit, MTD Spend
+    // Row 3+: Data
+    //
+    // Google's gviz behavior: When Row 1 has sparse data (e.g. only B1 filled),
+    // gviz uses column letters as headers ("A", "B", "C") and puts ALL rows as data.
+    // So: headers = ["A","B","C"], rows[0] = Row1 data, rows[1] = Row2 headers, rows[2+] = actual data
+    //
+    // OR if Row 1 has text in all columns, gviz treats it as headers.
+    // We need to handle both cases.
+
+    function formatGvizValue(v) {
+      if (!v) return '';
+      const s = String(v).trim();
+      const gvizMatch = s.match(/Date\((\d{4}),(\d+),(\d+)\)/);
+      if (gvizMatch) {
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${gvizMatch[3]}-${months[parseInt(gvizMatch[2])]}-${gvizMatch[1]}`;
+      }
+      return s;
+    }
+
+    function isColumnLetter(s) {
+      return /^[A-Z]{1,2}$/.test((s || '').trim());
+    }
+
+    let asOfDate = '';
+    let usageRows = [];
+
+    const headersAreColumnLetters = usageData.headers.every(h => isColumnLetter(h) || !h.trim());
+
+    if (headersAreColumnLetters) {
+      // gviz used column letters — all actual content is in rows[]
+      // rows[0] = Row 1 (date row), rows[1] = Row 2 (real headers), rows[2+] = data
+      // Date is in rows[0][1] (cell B1)
+      if (usageData.rows.length > 0) {
+        asOfDate = formatGvizValue(usageData.rows[0][1] || usageData.rows[0][0] || '');
+      }
+      // Skip rows[0] (date row) and rows[1] (header row), data starts at rows[2]
+      usageRows = usageData.rows.slice(2);
+    } else {
+      // gviz treated Row 1 as headers — date might be in headers[1]
+      asOfDate = formatGvizValue(usageData.headers[1] || '');
+      // rows[0] = Row 2 (real column headers), rows[1+] = data
+      usageRows = usageData.rows.slice(1);
+    }
+
+    // Fallback: if we still don't have a date, search all available data
+    if (!asOfDate || asOfDate === 'B' || asOfDate.length <= 1) {
+      // Scan first few rows for anything that looks like a date
+      const allValues = [...usageData.headers, ...(usageData.rows[0] || []), ...(usageData.rows[1] || [])];
+      for (const v of allValues) {
+        const fv = formatGvizValue(v);
+        if (fv && fv.length > 2 && fv.length < 30 && /\d/.test(fv) && !isColumnLetter(fv)) {
+          asOfDate = fv;
+          break;
+        }
+      }
+    }
+
+    STATE.asOfDate = asOfDate || 'Unknown date';
+
+    STATE.usage = usageRows.map(r => {
+      const nameEmail = (r[0] || '').trim();
+      const emailMatch = nameEmail.match(/[\w.\-+]+@[\w.\-]+\.\w+/);
+      const email = emailMatch ? emailMatch[0] : '';
+      const name = nameEmail.replace(email, '').trim();
+      const limit = (r[1] || '–').trim();
+      const spendStr = (r[2] || '0').replace(/[$,]/g, '');
+      const spend = parseFloat(spendStr) || 0;
+      return { name, email, limit, spend };
+    }).filter(u => u.email);
+
+    if (STATE.usage.length === 0) throw new Error('No valid usage data found in AsOfDateUsage sheet.');
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    render();
+  } catch(err) {
+    document.getElementById('loading').innerHTML = `
+      <div class="error-msg">
+        <p style="font-size:18px;font-weight:600;margin-bottom:8px;">Failed to load data</p>
+        <p style="margin-bottom:16px">${err.message}</p>
+        <div style="text-align:left;max-width:500px;margin:0 auto;font-size:12px;color:#5A5A5A;background:#f8f9fb;padding:16px 20px;border-radius:8px;">
+          <p style="font-weight:600;margin-bottom:8px">Checklist:</p>
+          <p>1. <b>Publish to web:</b> File → Share → Publish to web → Entire Document → Publish</p>
+          <p>2. <b>Auto-republish</b> must be checked</p>
+          <p>3. <b>Link sharing:</b> Share → Anyone with the link → Viewer</p>
+          <p>4. <b>Sheet names:</b> "Employee Master", "CreditTopUps", "AsOfDateUsage"</p>
+          <p>5. <b>AsOfDateUsage format:</b> Row 1 = date, Row 2 = headers, Row 3+ = data</p>
+        </div>
+      </div>`;
+  }
+}
+
+// ─── RENDER ─────────────────────────────────────────────────────────────────────
+function render() {
+  // Date label
+  document.getElementById('dateLabel').textContent = `As of ${STATE.asOfDate} · MTD · Live from Google Sheets`;
+
+  // Build email lookup from employees
+  const emailMap = {};
+  STATE.employees.forEach(emp => {
+    emailMap[emp.email] = emp;
+  });
+
+  // Enrich usage data
+  const enriched = STATE.usage.map(u => {
+    const emp = emailMap[u.email.toLowerCase()];
+    return {
+      ...u,
+      fullName: emp ? emp.name : u.name,
+      dept: emp ? emp.department : 'Unknown',
+      location: emp ? emp.location : 'Unknown',
+      empType: emp ? emp.employmentType : 'Unknown',
+    };
+  });
+
+  // Populate dept/loc filters
+  const depts = [...new Set(enriched.map(u => u.dept))].filter(d => d !== 'Unknown').sort();
+  const locs = [...new Set(enriched.map(u => u.location))].filter(l => l !== 'Unknown').sort();
+
+  const deptSel = document.getElementById('deptFilter');
+  if (deptSel.options.length <= 1) {
+    depts.forEach(d => { const o = document.createElement('option'); o.value = d; o.text = d; deptSel.add(o); });
+  }
+  const locSel = document.getElementById('locFilter');
+  if (locSel.options.length <= 1) {
+    locs.forEach(l => { const o = document.createElement('option'); o.value = l; o.text = l; locSel.add(o); });
+  }
+
+  // Filter
+  const filtered = enriched.filter(u => {
+    if (STATE.deptFilter !== 'All' && u.dept !== STATE.deptFilter) return false;
+    if (STATE.locFilter !== 'All' && u.location !== STATE.locFilter) return false;
+    if (STATE.search && !u.fullName.toLowerCase().includes(STATE.search.toLowerCase()) && !u.email.toLowerCase().includes(STATE.search.toLowerCase())) return false;
+    return true;
+  });
+
+  // Sort
+  const sorted = [...filtered].sort((a, b) => {
+    if (STATE.sortBy === 'spend') return STATE.sortDir === 'desc' ? b.spend - a.spend : a.spend - b.spend;
+    if (STATE.sortBy === 'name') return STATE.sortDir === 'desc' ? b.fullName.localeCompare(a.fullName) : a.fullName.localeCompare(b.fullName);
+    return 0;
+  });
+
+  // Stats
+  const totalSpend = filtered.reduce((s, u) => s + u.spend, 0);
+  const activeUsers = filtered.filter(u => u.spend > 0).length;
+  const totalUsers = filtered.length;
+  const avgSpend = activeUsers > 0 ? totalSpend / activeUsers : 0;
+  const totalInvestment = STATE.billing.reduce((s, b) => s + b.amount, 0);
+  const totalSeats = STATE.billing.reduce((s, b) => s + (b.seats || 0), 0);
+  const creditTopups = STATE.billing.filter(b => b.reason.includes('Credit') || b.reason.includes('Topup')).reduce((s, b) => s + b.amount, 0);
+
+  // Dept breakdown
+  const deptMap = {};
+  filtered.forEach(u => {
+    if (!deptMap[u.dept]) deptMap[u.dept] = {spend:0, users:0, active:0};
+    deptMap[u.dept].users++;
+    deptMap[u.dept].spend += u.spend;
+    if (u.spend > 0) deptMap[u.dept].active++;
+  });
+  const deptData = Object.entries(deptMap).sort((a,b) => b[1].spend - a[1].spend);
+  const maxDeptSpend = deptData.length > 0 ? Math.max(...deptData.map(d => d[1].spend)) : 1;
+
+  // Usage distribution
+  const bucketDef = [["$0",u=>u.spend===0],["$0.01–$10",u=>u.spend>0&&u.spend<=10],["$10–$50",u=>u.spend>10&&u.spend<=50],["$50–$100",u=>u.spend>50&&u.spend<=100],["$100–$200",u=>u.spend>100&&u.spend<=200],["$200+",u=>u.spend>200]];
+  const buckets = bucketDef.map(([label, fn]) => [label, filtered.filter(fn).length]);
+  const maxBucket = Math.max(...buckets.map(b => b[1]), 1);
+
+  const displayList = STATE.showAll ? sorted : sorted.slice(0, 15);
+  const barMax = sorted[0]?.spend || 1;
+
+  // Show/hide filters
+  document.getElementById('usageFilters').style.display = STATE.activeTab === 'usage' ? 'flex' : 'none';
+
+  // ─── USAGE TAB ──────────────────────────────────────────────────────────────
+  let usageHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card accent"><div class="kpi-label">MTD Usage Spend</div><div class="kpi-value">${fmt(totalSpend)}</div><div class="kpi-sub">As of ${STATE.asOfDate}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Active Users</div><div class="kpi-value">${activeUsers}</div><div class="kpi-sub">of ${totalUsers} total</div></div>
+      <div class="kpi-card"><div class="kpi-label">Avg Spend / Active User</div><div class="kpi-value">${fmt(avgSpend)}</div><div class="kpi-sub">This month</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total Investment</div><div class="kpi-value">${fmt(totalInvestment)}</div><div class="kpi-sub">Since Mar 20</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total Seats</div><div class="kpi-value">${totalSeats}</div><div class="kpi-sub">Purchased</div></div>
+      <div class="kpi-card"><div class="kpi-label">Credit Topups</div><div class="kpi-value">${fmt(creditTopups)}</div><div class="kpi-sub">Usage credits</div></div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel" style="margin-bottom:0">
+        <h2>Department-wise Spend</h2>
+        ${deptData.map(([dept, data]) => `
+          <div class="bar-row">
+            <div class="bar-label"><span>${dept}</span><span>${fmt(data.spend)} · ${data.active}/${data.users} active</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${(data.spend/maxDeptSpend)*100}%;background:${DEPT_COLORS[dept]||'#999'}"></div></div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="panel" style="margin-bottom:0">
+        <h2>Usage Distribution</h2>
+        ${buckets.map(([range, count]) => `
+          <div class="bar-row">
+            <div class="bar-label"><span>${range}</span><span>${count} users</span></div>
+            <div class="bar-track"><div class="bar-fill" style="width:${(count/maxBucket)*100}%;background:${range==='$200+'?'#FF5800':range==='$0'?'#CECECE':'#131A48'}"></div></div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin-bottom:0">User-wise Spend ${STATE.deptFilter!=='All'?`<span style="color:#FF5800;font-size:13px">· ${STATE.deptFilter}</span>`:''}</h2>
+        <div style="font-size:11px;color:#5A5A5A">Showing ${displayList.length} of ${sorted.length} users</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>#</th>
+            <th class="sortable" onclick="toggleSort('name')">Name ${STATE.sortBy==='name'?(STATE.sortDir==='desc'?'▼':'▲'):''}</th>
+            <th>Department</th><th>Location</th><th>Limit</th>
+            <th class="right sortable" onclick="toggleSort('spend')">MTD Spend ${STATE.sortBy==='spend'?(STATE.sortDir==='desc'?'▼':'▲'):''}</th>
+            <th style="width:120px"></th>
+          </tr></thead>
+          <tbody>
+            ${displayList.map((u, i) => `
+              <tr>
+                <td style="color:#CECECE;font-size:11px">${i+1}</td>
+                <td><div style="font-weight:500;color:#131A48">${u.fullName}</div><div style="font-size:10px;color:#CECECE">${u.email}</div></td>
+                <td><span class="dept-tag" style="background:${(DEPT_COLORS[u.dept]||'#999')}18;color:${DEPT_COLORS[u.dept]||'#666'}">${u.dept}</span></td>
+                <td style="color:#5A5A5A;font-size:11px">${u.location}</td>
+                <td style="font-size:11px" class="${u.limit==='Unlimited'?'limit-unlimited':''}">${u.limit==='–'||u.limit==='-'||u.limit===''?'$100':u.limit}</td>
+                <td class="right spend-val ${u.spend>100?'spend-high':''}">${fmt(u.spend)}</td>
+                <td><div class="mini-bar"><div class="mini-bar-fill" style="width:${(u.spend/barMax)*100}%;background:${u.spend>200?'#FF5800':'#131A48'}"></div></div></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${sorted.length > 15 ? `<div style="text-align:center;margin-top:12px"><button class="toggle-btn ${STATE.showAll?'active':''}" onclick="toggleShowAll()">${STATE.showAll?'Show Top 15':`Show All ${sorted.length} Users`}</button></div>` : ''}
+    </div>
+  `;
+  document.getElementById('tab-usage').innerHTML = usageHTML;
+
+  // ─── INVESTMENT TAB ───────────────────────────────────────────────────────────
+  const billingFiltered = STATE.billing.filter(b => {
+    if (STATE.billingDateFilter !== 'All') {
+      // Match by checking if the date string contains the month abbreviation from the filter
+      const filterMonth = STATE.billingDateFilter; // e.g. "March 2026", "April 2026"
+      const monthAbbr = filterMonth.slice(0, 3); // "Mar", "Apr", "May" etc.
+      if (!b.date.includes(monthAbbr)) return false;
+    }
+    if (STATE.billingTypeFilter !== 'All' && b.reason !== STATE.billingTypeFilter) return false;
+    return true;
+  });
+  const bfTotal = billingFiltered.reduce((s, b) => s + b.amount, 0);
+  const bfSeats = billingFiltered.reduce((s, b) => s + (b.seats || 0), 0);
+  const bfCredits = billingFiltered.filter(b => b.reason.includes('Credit') || b.reason.includes('Topup')).reduce((s,b)=>s+b.amount,0);
+  const bfPlatform = billingFiltered.filter(b => !(b.reason.includes('Credit') || b.reason.includes('Topup'))).reduce((s,b)=>s+b.amount,0);
+
+  // Auto-detect months from billing data
+  const monthNames = {Jan:'January',Feb:'February',Mar:'March',Apr:'April',May:'May',Jun:'June',Jul:'July',Aug:'August',Sep:'September',Oct:'October',Nov:'November',Dec:'December'};
+  const detectedMonths = new Set();
+  STATE.billing.forEach(b => {
+    const m = b.date.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
+    if (m) {
+      const yr = b.date.match(/\d{4}/);
+      const year = yr ? yr[0] : '2026';
+      detectedMonths.add(`${monthNames[m[1]]} ${year}`);
+    }
+  });
+  const billingMonths = ['All', ...Array.from(detectedMonths).sort()];
+  const billingTypes = ['All',...new Set(STATE.billing.map(b=>b.reason))];
+
+  let invHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card accent"><div class="kpi-label">Filtered Total</div><div class="kpi-value">${fmt(bfTotal)}</div><div class="kpi-sub">${billingFiltered.length} transaction${billingFiltered.length!==1?'s':''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Seats in Selection</div><div class="kpi-value">${bfSeats}</div><div class="kpi-sub">New seats purchased</div></div>
+      <div class="kpi-card"><div class="kpi-label">Credits in Selection</div><div class="kpi-value">${fmt(bfCredits)}</div><div class="kpi-sub">Usage credit topups</div></div>
+      <div class="kpi-card"><div class="kpi-label">Seats + Onboarding</div><div class="kpi-value">${fmt(bfPlatform)}</div><div class="kpi-sub">Platform cost</div></div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+        <h2 style="margin-bottom:0">All Transactions</h2>
+        <div class="filter-btns">
+          ${billingMonths.map(m=>`<button class="filter-btn ${STATE.billingDateFilter===m?'active-orange':''}" onclick="setBillingDate('${m}')">${m==='All'?'All Time':m}</button>`).join('')}
+          <div class="filter-sep"></div>
+          ${billingTypes.map(t=>`<button class="filter-btn ${STATE.billingTypeFilter===t?'active-navy':''}" onclick="setBillingType('${t}')">${t==='All'?'All Types':t}</button>`).join('')}
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Date</th><th>Seats</th><th>Amount (USD)</th><th>Type</th></tr></thead>
+          <tbody>
+            ${billingFiltered.map((b, i) => `
+              <tr>
+                <td style="color:#5A5A5A">${b.date}</td>
+                <td style="color:${b.seats?'#131A48':'#CECECE'};font-weight:${b.seats?600:400}">${b.seats||'—'}</td>
+                <td class="spend-val">${fmt(b.amount)}</td>
+                <td><span class="tag ${b.reason.includes('Credit')||b.reason.includes('Topup')?'tag-topup':b.reason.includes('Onboard')?'tag-onboard':'tag-seat'}">${b.reason}</span></td>
+              </tr>
+            `).join('')}
+            <tr class="sum-row">
+              <td>TOTAL</td>
+              <td>${bfSeats>0?bfSeats:'—'}</td>
+              <td style="color:#FF5800;font-family:var(--font-h);font-size:16px">${fmt(bfTotal)}</td>
+              <td style="font-size:11px;color:#5A5A5A">${billingFiltered.length} transaction${billingFiltered.length!==1?'s':''}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      ${billingFiltered.length===0?'<div style="text-align:center;padding:30px 0;color:#CECECE;font-size:13px">No transactions match the selected filters.</div>':''}
+    </div>
+  `;
+  document.getElementById('tab-investment').innerHTML = invHTML;
+}
+
+// ─── EVENT HANDLERS ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    STATE.activeTab = btn.dataset.tab;
+    document.getElementById('tab-usage').style.display = STATE.activeTab === 'usage' ? '' : 'none';
+    document.getElementById('tab-investment').style.display = STATE.activeTab === 'investment' ? '' : 'none';
+    render();
+  });
+});
+
+document.getElementById('deptFilter').addEventListener('change', e => { STATE.deptFilter = e.target.value; render(); });
+document.getElementById('locFilter').addEventListener('change', e => { STATE.locFilter = e.target.value; render(); });
+document.getElementById('searchInput').addEventListener('input', e => { STATE.search = e.target.value; render(); });
+
+function toggleSort(col) {
+  if (STATE.sortBy === col) STATE.sortDir = STATE.sortDir === 'desc' ? 'asc' : 'desc';
+  else { STATE.sortBy = col; STATE.sortDir = 'desc'; }
+  render();
+}
+
+function toggleShowAll() { STATE.showAll = !STATE.showAll; render(); }
+function setBillingDate(v) { STATE.billingDateFilter = v; render(); }
+function setBillingType(v) { STATE.billingTypeFilter = v; render(); }
+
+// ─── INIT ───────────────────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
