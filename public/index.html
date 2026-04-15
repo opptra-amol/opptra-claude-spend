@@ -89,6 +89,8 @@ body { font-family: var(--font-b); background: var(--bg); color: var(--navy); }
   .tab-btn { padding:8px 16px; font-size:12px; white-space:nowrap; }
   .filter-btns { gap:4px; }
   .filter-btn { padding:4px 10px; font-size:10px; }
+  .api-filters-row { gap:6px; }
+  .api-filter-group select { font-size:11px; padding:4px 6px; }
 }
 
 /* Panel */
@@ -116,6 +118,9 @@ tbody tr:nth-child(even) { background:#fafbfc; }
 .tag-topup { background:var(--yellow); color:#ca8a04; }
 .tag-onboard { background:#eef6ff; color:#2563eb; }
 .tag-seat { background:#fef2f2; color:#dc2626; }
+.tag-apicredit { background:#f0fdf4; color:#16a34a; }
+.tag-token { background:#eef6ff; color:#2563eb; }
+.tag-websearch { background:var(--yellow); color:#ca8a04; }
 .dept-tag { padding:2px 6px; border-radius:3px; font-size:10px; font-weight:500; }
 .spend-val { font-weight:600; font-family:var(--font-h); font-size:14px; }
 .spend-high { color:var(--orange); }
@@ -144,6 +149,15 @@ tbody tr:nth-child(even) { background:#fafbfc; }
 
 .footer { text-align:center; padding:20px 0 8px; font-size:11px; color:var(--grey-light); }
 .error-msg { text-align:center; padding:60px 20px; color:#dc2626; font-size:14px; }
+
+/* API Tab specific */
+.api-filters-row { display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end; }
+.api-filter-group { display:flex; flex-direction:column; gap:3px; }
+.api-filter-group label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; color:var(--grey); }
+.api-filter-group select {
+  padding:5px 10px; border-radius:6px; border:1px solid var(--grey-light);
+  font-size:12px; font-family:var(--font-b); color:var(--navy); background:#fff; cursor:pointer;
+}
 </style>
 </head>
 <body>
@@ -171,12 +185,14 @@ tbody tr:nth-child(even) { background:#fafbfc; }
     </div>
     <div class="tabs">
       <button class="tab-btn active" data-tab="usage">Usage Overview</button>
+      <button class="tab-btn" data-tab="api">API Usage</button>
       <button class="tab-btn" data-tab="investment">Investment Tracker</button>
     </div>
   </div>
 
   <div class="content">
     <div id="tab-usage"></div>
+    <div id="tab-api" style="display:none"></div>
     <div id="tab-investment" style="display:none"></div>
     <div class="footer">Opptra IT · Claude Enterprise Usage Dashboard · Live from Google Sheets</div>
   </div>
@@ -191,9 +207,14 @@ const DEPT_COLORS = {
   "Finance & Legal":"#16a34a","Product & Tech":"#9333ea","HR & TA & Admin":"#dc2626","FamilyOffice":"#ca8a04"
 };
 
-const fmt = v => "$" + Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const MODEL_COLORS = {
+  "Claude Sonnet 4.6":"#9333ea","Claude Sonnet 4":"#2563eb","Claude Haiku 4.5":"#16a34a","--":"#CECECE"
+};
 
-// ─── JSONP LOADER (bypasses CORS — works from file:// and any origin) ───────────
+const fmt = v => "$" + Number(v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const fmt4 = v => "$" + Number(v).toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:4});
+
+// ─── JSONP LOADER ───────────────────────────────────────────────────────────────
 let _jsonpCounter = 0;
 function loadSheetJSONP(sheetName) {
   return new Promise((resolve, reject) => {
@@ -211,12 +232,10 @@ function loadSheetJSONP(sheetName) {
         return;
       }
 
-      // Parse the Google Visualization DataTable response into simple arrays
       const table = response.table;
       const headers = table.cols.map(c => c.label || c.id || '');
       const rows = table.rows.map(r => r.c.map(cell => {
         if (!cell) return '';
-        // Google returns {v: value, f: formatted} — prefer f (formatted) for display, fall back to v
         return cell.f != null ? cell.f : (cell.v != null ? String(cell.v) : '');
       }));
       resolve({ headers, rows });
@@ -233,10 +252,13 @@ function loadSheetJSONP(sheetName) {
 
 // ─── STATE ──────────────────────────────────────────────────────────────────────
 let STATE = {
-  employees: [], billing: [], usage: [], asOfDate: '',
+  employees: [], billing: [], usage: [], apiUsage: [], asOfDate: '',
   activeTab: 'usage', deptFilter: 'All', locFilter: 'All', search: '',
   billingDateFilter: 'All', billingTypeFilter: 'All',
-  showAll: false, sortBy: 'spend', sortDir: 'desc'
+  billingSortDir: 'desc',
+  showAll: false, sortBy: 'spend', sortDir: 'desc',
+  apiDateFilter: 'All', apiModelFilter: 'All', apiWorkspaceFilter: 'All', apiCostTypeFilter: 'All',
+  apiSortBy: 'cost', apiSortDir: 'desc'
 };
 
 // ─── LOAD DATA ──────────────────────────────────────────────────────────────────
@@ -244,32 +266,24 @@ async function loadData() {
   try {
     document.querySelector('#loading p').textContent = 'Fetching data from Google Sheets...';
 
-    // Fetch all 3 sheets in parallel via JSONP
-    const [empData, billingData, usageData] = await Promise.all([
+    const [empData, billingData, usageData, apiData] = await Promise.all([
       loadSheetJSONP('Employee Master'),
       loadSheetJSONP('CreditTopUps'),
-      loadSheetJSONP('AsOfDateUsage')
+      loadSheetJSONP('AsOfDateUsage'),
+      loadSheetJSONP('APIUsage')
     ]);
 
-    // Parse employees — use position-based mapping since gviz headers can be unreliable
-    // Employee Master columns: A=Name, B=Email ID, C=Department, D=Employment Type, E=Location, F=Claude Access
-    STATE.employees = empData.rows.map(r => {
-      // Try header-based first, fall back to position-based
-      const obj = {};
-      empData.headers.forEach((h, i) => obj[h] = (r[i] || '').trim());
-      // Position-based override — these are the guaranteed column positions
-      return {
-        name: (r[0] || '').trim(),
-        email: (r[1] || '').trim().toLowerCase(),
-        department: (r[2] || '').trim(),
-        employmentType: (r[3] || '').trim(),
-        location: (r[4] || '').trim(),
-        claudeAccess: (r[5] || '').trim(),
-        _raw: obj // keep header-based version as fallback
-      };
-    }).filter(e => e.email);
+    // Parse employees — position-based
+    STATE.employees = empData.rows.map(r => ({
+      name: (r[0] || '').trim(),
+      email: (r[1] || '').trim().toLowerCase(),
+      department: (r[2] || '').trim(),
+      employmentType: (r[3] || '').trim(),
+      location: (r[4] || '').trim(),
+      claudeAccess: (r[5] || '').trim(),
+    })).filter(e => e.email);
 
-    // Parse billing — position-based: A=Date, B=Seats Count, C=Amount in USD, D=Reason
+    // Parse billing — position-based
     STATE.billing = billingData.rows.map(r => ({
       date: (r[0] || '').trim(),
       seats: parseInt(r[1] || '0') || null,
@@ -277,18 +291,7 @@ async function loadData() {
       reason: (r[3] || '').trim()
     })).filter(b => b.amount > 0);
 
-    // Parse usage — Sheet structure:
-    // Row 1: A1 = "As of Date" or blank, B1 = date value (e.g. "14-Apr")
-    // Row 2: Headers — Name, Custom spend limit, MTD Spend
-    // Row 3+: Data
-    //
-    // Google's gviz behavior: When Row 1 has sparse data (e.g. only B1 filled),
-    // gviz uses column letters as headers ("A", "B", "C") and puts ALL rows as data.
-    // So: headers = ["A","B","C"], rows[0] = Row1 data, rows[1] = Row2 headers, rows[2+] = actual data
-    //
-    // OR if Row 1 has text in all columns, gviz treats it as headers.
-    // We need to handle both cases.
-
+    // Parse usage — gviz quirk handling
     function formatGvizValue(v) {
       if (!v) return '';
       const s = String(v).trim();
@@ -300,41 +303,25 @@ async function loadData() {
       return s;
     }
 
-    function isColumnLetter(s) {
-      return /^[A-Z]{1,2}$/.test((s || '').trim());
-    }
+    function isColumnLetter(s) { return /^[A-Z]{1,2}$/.test((s || '').trim()); }
 
     let asOfDate = '';
     let usageRows = [];
-
     const headersAreColumnLetters = usageData.headers.every(h => isColumnLetter(h) || !h.trim());
 
     if (headersAreColumnLetters) {
-      // gviz used column letters — all actual content is in rows[]
-      // rows[0] = Row 1 (date row), rows[1] = Row 2 (real headers), rows[2+] = data
-      // Date is in rows[0][1] (cell B1)
-      if (usageData.rows.length > 0) {
-        asOfDate = formatGvizValue(usageData.rows[0][1] || usageData.rows[0][0] || '');
-      }
-      // Skip rows[0] (date row) and rows[1] (header row), data starts at rows[2]
+      if (usageData.rows.length > 0) asOfDate = formatGvizValue(usageData.rows[0][1] || usageData.rows[0][0] || '');
       usageRows = usageData.rows.slice(2);
     } else {
-      // gviz treated Row 1 as headers — date might be in headers[1]
       asOfDate = formatGvizValue(usageData.headers[1] || '');
-      // rows[0] = Row 2 (real column headers), rows[1+] = data
       usageRows = usageData.rows.slice(1);
     }
 
-    // Fallback: if we still don't have a date, search all available data
     if (!asOfDate || asOfDate === 'B' || asOfDate.length <= 1) {
-      // Scan first few rows for anything that looks like a date
       const allValues = [...usageData.headers, ...(usageData.rows[0] || []), ...(usageData.rows[1] || [])];
       for (const v of allValues) {
         const fv = formatGvizValue(v);
-        if (fv && fv.length > 2 && fv.length < 30 && /\d/.test(fv) && !isColumnLetter(fv)) {
-          asOfDate = fv;
-          break;
-        }
+        if (fv && fv.length > 2 && fv.length < 30 && /\d/.test(fv) && !isColumnLetter(fv)) { asOfDate = fv; break; }
       }
     }
 
@@ -353,6 +340,23 @@ async function loadData() {
 
     if (STATE.usage.length === 0) throw new Error('No valid usage data found in AsOfDateUsage sheet.');
 
+    // Parse API Usage — position-based
+    // 0=date, 1=model, 2=workspace, 3=api_key, 4=usage_type, 5=context_window, 6=token_type, 7=cost_usd, 8=list_price_usd, 9=cost_type, 10=inference_geo, 11=speed
+    STATE.apiUsage = apiData.rows.map(r => ({
+      date: (r[0] || '').trim(),
+      model: (r[1] || '').trim(),
+      workspace: (r[2] || '').trim(),
+      apiKey: (r[3] || '').trim(),
+      usageType: (r[4] || '').trim(),
+      contextWindow: (r[5] || '').trim(),
+      tokenType: (r[6] || '').trim(),
+      costUsd: parseFloat((r[7] || '0').replace(/[$,]/g, '')) || 0,
+      listPriceUsd: parseFloat((r[8] || '0').replace(/[$,]/g, '')) || 0,
+      costType: (r[9] || '').trim(),
+      inferenceGeo: (r[10] || '').trim(),
+      speed: (r[11] || '').trim()
+    })).filter(r => r.date);
+
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'block';
     render();
@@ -366,8 +370,7 @@ async function loadData() {
           <p>1. <b>Publish to web:</b> File → Share → Publish to web → Entire Document → Publish</p>
           <p>2. <b>Auto-republish</b> must be checked</p>
           <p>3. <b>Link sharing:</b> Share → Anyone with the link → Viewer</p>
-          <p>4. <b>Sheet names:</b> "Employee Master", "CreditTopUps", "AsOfDateUsage"</p>
-          <p>5. <b>AsOfDateUsage format:</b> Row 1 = date, Row 2 = headers, Row 3+ = data</p>
+          <p>4. <b>Sheet names:</b> "Employee Master", "CreditTopUps", "AsOfDateUsage", "APIUsage"</p>
         </div>
       </div>`;
   }
@@ -375,41 +378,24 @@ async function loadData() {
 
 // ─── RENDER ─────────────────────────────────────────────────────────────────────
 function render() {
-  // Date label
   document.getElementById('dateLabel').textContent = `As of ${STATE.asOfDate} · MTD · Live from Google Sheets`;
 
-  // Build email lookup from employees
   const emailMap = {};
-  STATE.employees.forEach(emp => {
-    emailMap[emp.email] = emp;
-  });
+  STATE.employees.forEach(emp => { emailMap[emp.email] = emp; });
 
-  // Enrich usage data
   const enriched = STATE.usage.map(u => {
     const emp = emailMap[u.email.toLowerCase()];
-    return {
-      ...u,
-      fullName: emp ? emp.name : u.name,
-      dept: emp ? emp.department : 'Unknown',
-      location: emp ? emp.location : 'Unknown',
-      empType: emp ? emp.employmentType : 'Unknown',
-    };
+    return { ...u, fullName: emp ? emp.name : u.name, dept: emp ? emp.department : 'Unknown', location: emp ? emp.location : 'Unknown', empType: emp ? emp.employmentType : 'Unknown' };
   });
 
-  // Populate dept/loc filters
+  // Populate dept/loc filters (only once)
   const depts = [...new Set(enriched.map(u => u.dept))].filter(d => d !== 'Unknown').sort();
   const locs = [...new Set(enriched.map(u => u.location))].filter(l => l !== 'Unknown').sort();
-
   const deptSel = document.getElementById('deptFilter');
-  if (deptSel.options.length <= 1) {
-    depts.forEach(d => { const o = document.createElement('option'); o.value = d; o.text = d; deptSel.add(o); });
-  }
+  if (deptSel.options.length <= 1) { depts.forEach(d => { const o = document.createElement('option'); o.value = d; o.text = d; deptSel.add(o); }); }
   const locSel = document.getElementById('locFilter');
-  if (locSel.options.length <= 1) {
-    locs.forEach(l => { const o = document.createElement('option'); o.value = l; o.text = l; locSel.add(o); });
-  }
+  if (locSel.options.length <= 1) { locs.forEach(l => { const o = document.createElement('option'); o.value = l; o.text = l; locSel.add(o); }); }
 
-  // Filter
   const filtered = enriched.filter(u => {
     if (STATE.deptFilter !== 'All' && u.dept !== STATE.deptFilter) return false;
     if (STATE.locFilter !== 'All' && u.location !== STATE.locFilter) return false;
@@ -417,14 +403,12 @@ function render() {
     return true;
   });
 
-  // Sort
   const sorted = [...filtered].sort((a, b) => {
     if (STATE.sortBy === 'spend') return STATE.sortDir === 'desc' ? b.spend - a.spend : a.spend - b.spend;
     if (STATE.sortBy === 'name') return STATE.sortDir === 'desc' ? b.fullName.localeCompare(a.fullName) : a.fullName.localeCompare(b.fullName);
     return 0;
   });
 
-  // Stats
   const totalSpend = filtered.reduce((s, u) => s + u.spend, 0);
   const activeUsers = filtered.filter(u => u.spend > 0).length;
   const totalUsers = filtered.length;
@@ -433,18 +417,15 @@ function render() {
   const totalSeats = STATE.billing.reduce((s, b) => s + (b.seats || 0), 0);
   const creditTopups = STATE.billing.filter(b => b.reason.includes('Credit') || b.reason.includes('Topup')).reduce((s, b) => s + b.amount, 0);
 
-  // Dept breakdown
   const deptMap = {};
   filtered.forEach(u => {
     if (!deptMap[u.dept]) deptMap[u.dept] = {spend:0, users:0, active:0};
-    deptMap[u.dept].users++;
-    deptMap[u.dept].spend += u.spend;
+    deptMap[u.dept].users++; deptMap[u.dept].spend += u.spend;
     if (u.spend > 0) deptMap[u.dept].active++;
   });
   const deptData = Object.entries(deptMap).sort((a,b) => b[1].spend - a[1].spend);
   const maxDeptSpend = deptData.length > 0 ? Math.max(...deptData.map(d => d[1].spend)) : 1;
 
-  // Usage distribution
   const bucketDef = [["$0",u=>u.spend===0],["$0.01–$10",u=>u.spend>0&&u.spend<=10],["$10–$50",u=>u.spend>10&&u.spend<=50],["$50–$100",u=>u.spend>50&&u.spend<=100],["$100–$200",u=>u.spend>100&&u.spend<=200],["$200+",u=>u.spend>200]];
   const buckets = bucketDef.map(([label, fn]) => [label, filtered.filter(fn).length]);
   const maxBucket = Math.max(...buckets.map(b => b[1]), 1);
@@ -452,11 +433,10 @@ function render() {
   const displayList = STATE.showAll ? sorted : sorted.slice(0, 15);
   const barMax = sorted[0]?.spend || 1;
 
-  // Show/hide filters
   document.getElementById('usageFilters').style.display = STATE.activeTab === 'usage' ? 'flex' : 'none';
 
-  // ─── USAGE TAB ──────────────────────────────────────────────────────────────
-  let usageHTML = `
+  // ─── USAGE TAB ────────────────────────────────────────────────────────────────
+  document.getElementById('tab-usage').innerHTML = `
     <div class="kpi-grid">
       <div class="kpi-card accent"><div class="kpi-label">MTD Usage Spend</div><div class="kpi-value">${fmt(totalSpend)}</div><div class="kpi-sub">As of ${STATE.asOfDate}</div></div>
       <div class="kpi-card"><div class="kpi-label">Active Users</div><div class="kpi-value">${activeUsers}</div><div class="kpi-sub">of ${totalUsers} total</div></div>
@@ -465,28 +445,16 @@ function render() {
       <div class="kpi-card"><div class="kpi-label">Total Seats</div><div class="kpi-value">${totalSeats}</div><div class="kpi-sub">Purchased</div></div>
       <div class="kpi-card"><div class="kpi-label">Credit Topups</div><div class="kpi-value">${fmt(creditTopups)}</div><div class="kpi-sub">Usage credits</div></div>
     </div>
-
     <div class="two-col">
       <div class="panel" style="margin-bottom:0">
         <h2>Department-wise Spend</h2>
-        ${deptData.map(([dept, data]) => `
-          <div class="bar-row">
-            <div class="bar-label"><span>${dept}</span><span>${fmt(data.spend)} · ${data.active}/${data.users} active</span></div>
-            <div class="bar-track"><div class="bar-fill" style="width:${(data.spend/maxDeptSpend)*100}%;background:${DEPT_COLORS[dept]||'#999'}"></div></div>
-          </div>
-        `).join('')}
+        ${deptData.map(([dept, data]) => `<div class="bar-row"><div class="bar-label"><span>${dept}</span><span>${fmt(data.spend)} · ${data.active}/${data.users} active</span></div><div class="bar-track"><div class="bar-fill" style="width:${(data.spend/maxDeptSpend)*100}%;background:${DEPT_COLORS[dept]||'#999'}"></div></div></div>`).join('')}
       </div>
       <div class="panel" style="margin-bottom:0">
         <h2>Usage Distribution</h2>
-        ${buckets.map(([range, count]) => `
-          <div class="bar-row">
-            <div class="bar-label"><span>${range}</span><span>${count} users</span></div>
-            <div class="bar-track"><div class="bar-fill" style="width:${(count/maxBucket)*100}%;background:${range==='$200+'?'#FF5800':range==='$0'?'#CECECE':'#131A48'}"></div></div>
-          </div>
-        `).join('')}
+        ${buckets.map(([range, count]) => `<div class="bar-row"><div class="bar-label"><span>${range}</span><span>${count} users</span></div><div class="bar-track"><div class="bar-fill" style="width:${(count/maxBucket)*100}%;background:${range==='$200+'?'#FF5800':range==='$0'?'#CECECE':'#131A48'}"></div></div></div>`).join('')}
       </div>
     </div>
-
     <div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <h2 style="margin-bottom:0">User-wise Spend ${STATE.deptFilter!=='All'?`<span style="color:#FF5800;font-size:13px">· ${STATE.deptFilter}</span>`:''}</h2>
@@ -502,8 +470,7 @@ function render() {
             <th style="width:120px"></th>
           </tr></thead>
           <tbody>
-            ${displayList.map((u, i) => `
-              <tr>
+            ${displayList.map((u, i) => `<tr>
                 <td style="color:#CECECE;font-size:11px">${i+1}</td>
                 <td><div style="font-weight:500;color:#131A48">${u.fullName}</div><div style="font-size:10px;color:#CECECE">${u.email}</div></td>
                 <td><span class="dept-tag" style="background:${(DEPT_COLORS[u.dept]||'#999')}18;color:${DEPT_COLORS[u.dept]||'#666'}">${u.dept}</span></td>
@@ -511,54 +478,60 @@ function render() {
                 <td style="font-size:11px" class="${u.limit==='Unlimited'?'limit-unlimited':''}">${u.limit==='–'||u.limit==='-'||u.limit===''?'$100':u.limit}</td>
                 <td class="right spend-val ${u.spend>100?'spend-high':''}">${fmt(u.spend)}</td>
                 <td><div class="mini-bar"><div class="mini-bar-fill" style="width:${(u.spend/barMax)*100}%;background:${u.spend>200?'#FF5800':'#131A48'}"></div></div></td>
-              </tr>
-            `).join('')}
+              </tr>`).join('')}
           </tbody>
         </table>
       </div>
       ${sorted.length > 15 ? `<div style="text-align:center;margin-top:12px"><button class="toggle-btn ${STATE.showAll?'active':''}" onclick="toggleShowAll()">${STATE.showAll?'Show Top 15':`Show All ${sorted.length} Users`}</button></div>` : ''}
     </div>
   `;
-  document.getElementById('tab-usage').innerHTML = usageHTML;
 
   // ─── INVESTMENT TAB ───────────────────────────────────────────────────────────
   const billingFiltered = STATE.billing.filter(b => {
     if (STATE.billingDateFilter !== 'All') {
-      // Match by checking if the date string contains the month abbreviation from the filter
-      const filterMonth = STATE.billingDateFilter; // e.g. "March 2026", "April 2026"
-      const monthAbbr = filterMonth.slice(0, 3); // "Mar", "Apr", "May" etc.
+      const monthAbbr = STATE.billingDateFilter.slice(0, 3);
       if (!b.date.includes(monthAbbr)) return false;
     }
     if (STATE.billingTypeFilter !== 'All' && b.reason !== STATE.billingTypeFilter) return false;
     return true;
   });
+
+  // Sort billing by date
+  const monthOrder = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+  function parseBillingDate(s) {
+    // Handle formats like "20-Mar-2026", "Mar 20, 2026", "20 Mar 2026"
+    const m = s.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
+    const d = s.match(/\b(\d{1,2})\b/);
+    const y = s.match(/(\d{4})/);
+    if (m && d && y) return new Date(parseInt(y[1]), monthOrder[m[1]], parseInt(d[1]));
+    return new Date(s); // fallback
+  }
+  billingFiltered.sort((a, b) => {
+    const da = parseBillingDate(a.date), db = parseBillingDate(b.date);
+    return STATE.billingSortDir === 'desc' ? db - da : da - db;
+  });
+
   const bfTotal = billingFiltered.reduce((s, b) => s + b.amount, 0);
   const bfSeats = billingFiltered.reduce((s, b) => s + (b.seats || 0), 0);
   const bfCredits = billingFiltered.filter(b => b.reason.includes('Credit') || b.reason.includes('Topup')).reduce((s,b)=>s+b.amount,0);
   const bfPlatform = billingFiltered.filter(b => !(b.reason.includes('Credit') || b.reason.includes('Topup'))).reduce((s,b)=>s+b.amount,0);
 
-  // Auto-detect months from billing data
   const monthNames = {Jan:'January',Feb:'February',Mar:'March',Apr:'April',May:'May',Jun:'June',Jul:'July',Aug:'August',Sep:'September',Oct:'October',Nov:'November',Dec:'December'};
   const detectedMonths = new Set();
   STATE.billing.forEach(b => {
     const m = b.date.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
-    if (m) {
-      const yr = b.date.match(/\d{4}/);
-      const year = yr ? yr[0] : '2026';
-      detectedMonths.add(`${monthNames[m[1]]} ${year}`);
-    }
+    if (m) { const yr = b.date.match(/\d{4}/); detectedMonths.add(`${monthNames[m[1]]} ${yr ? yr[0] : '2026'}`); }
   });
   const billingMonths = ['All', ...Array.from(detectedMonths).sort()];
   const billingTypes = ['All',...new Set(STATE.billing.map(b=>b.reason))];
 
-  let invHTML = `
+  document.getElementById('tab-investment').innerHTML = `
     <div class="kpi-grid">
       <div class="kpi-card accent"><div class="kpi-label">Filtered Total</div><div class="kpi-value">${fmt(bfTotal)}</div><div class="kpi-sub">${billingFiltered.length} transaction${billingFiltered.length!==1?'s':''}</div></div>
       <div class="kpi-card"><div class="kpi-label">Seats in Selection</div><div class="kpi-value">${bfSeats}</div><div class="kpi-sub">New seats purchased</div></div>
       <div class="kpi-card"><div class="kpi-label">Credits in Selection</div><div class="kpi-value">${fmt(bfCredits)}</div><div class="kpi-sub">Usage credit topups</div></div>
       <div class="kpi-card"><div class="kpi-label">Seats + Onboarding</div><div class="kpi-value">${fmt(bfPlatform)}</div><div class="kpi-sub">Platform cost</div></div>
     </div>
-
     <div class="panel">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
         <h2 style="margin-bottom:0">All Transactions</h2>
@@ -570,19 +543,16 @@ function render() {
       </div>
       <div style="overflow-x:auto">
         <table>
-          <thead><tr><th>Date</th><th>Seats</th><th>Amount (USD)</th><th>Type</th></tr></thead>
+          <thead><tr><th class="sortable" onclick="toggleBillingSort()">Date ${STATE.billingSortDir==='desc'?'▼':'▲'}</th><th>Seats</th><th>Amount (USD)</th><th>Type</th></tr></thead>
           <tbody>
-            ${billingFiltered.map((b, i) => `
-              <tr>
+            ${billingFiltered.map(b => `<tr>
                 <td style="color:#5A5A5A">${b.date}</td>
-                <td style="color:${b.seats?'#131A48':'#CECECE'};font-weight:${b.seats?600:400}">${b.seats||'—'}</td>
+                <td style="color:${b.seats?'#131A48':'#CECECE'};font-weight:${b.seats?600:400}">${b.seats||'–'}</td>
                 <td class="spend-val">${fmt(b.amount)}</td>
-                <td><span class="tag ${b.reason.includes('Credit')||b.reason.includes('Topup')?'tag-topup':b.reason.includes('Onboard')?'tag-onboard':'tag-seat'}">${b.reason}</span></td>
-              </tr>
-            `).join('')}
+                <td><span class="tag ${b.reason.includes('API Credit')?'tag-apicredit':b.reason.includes('Credit')||b.reason.includes('Topup')?'tag-topup':b.reason.includes('Onboard')?'tag-onboard':'tag-seat'}">${b.reason}</span></td>
+              </tr>`).join('')}
             <tr class="sum-row">
-              <td>TOTAL</td>
-              <td>${bfSeats>0?bfSeats:'—'}</td>
+              <td>TOTAL</td><td>${bfSeats>0?bfSeats:'—'}</td>
               <td style="color:#FF5800;font-family:var(--font-h);font-size:16px">${fmt(bfTotal)}</td>
               <td style="font-size:11px;color:#5A5A5A">${billingFiltered.length} transaction${billingFiltered.length!==1?'s':''}</td>
             </tr>
@@ -592,7 +562,176 @@ function render() {
       ${billingFiltered.length===0?'<div style="text-align:center;padding:30px 0;color:#CECECE;font-size:13px">No transactions match the selected filters.</div>':''}
     </div>
   `;
-  document.getElementById('tab-investment').innerHTML = invHTML;
+
+  // ─── API USAGE TAB ────────────────────────────────────────────────────────────
+  renderApiTab();
+}
+
+function renderApiTab() {
+  const data = STATE.apiUsage;
+  if (data.length === 0) {
+    document.getElementById('tab-api').innerHTML = '<div class="panel"><p style="color:#CECECE;text-align:center;padding:40px">No API usage data available. Ensure the "APIUsage" sheet exists and is published.</p></div>';
+    return;
+  }
+
+  const allDates = [...new Set(data.map(r => r.date))].sort();
+  const allModels = [...new Set(data.map(r => r.model))].sort();
+  const allWorkspaces = [...new Set(data.map(r => r.workspace))].sort();
+  const allCostTypes = [...new Set(data.map(r => r.costType))].sort();
+
+  const filtered = data.filter(r => {
+    if (STATE.apiDateFilter !== 'All' && r.date !== STATE.apiDateFilter) return false;
+    if (STATE.apiModelFilter !== 'All' && r.model !== STATE.apiModelFilter) return false;
+    if (STATE.apiWorkspaceFilter !== 'All' && r.workspace !== STATE.apiWorkspaceFilter) return false;
+    if (STATE.apiCostTypeFilter !== 'All' && r.costType !== STATE.apiCostTypeFilter) return false;
+    return true;
+  });
+
+  const totalCost = filtered.reduce((s, r) => s + r.costUsd, 0);
+  const uniqueDays = new Set(filtered.map(r => r.date)).size;
+  const dailyAvg = uniqueDays > 0 ? totalCost / uniqueDays : 0;
+
+  // Unique models and API keys count
+  const uniqueModels = new Set(filtered.filter(r => r.model !== '--').map(r => r.model)).size;
+  const uniqueKeys = new Set(filtered.map(r => r.apiKey)).size;
+
+  // Group by: date + model + workspace + cost_type → SUM(cost_usd)
+  const grouped = {};
+  filtered.forEach(r => {
+    const key = `${r.date}||${r.model}||${r.workspace}||${r.costType}`;
+    if (!grouped[key]) grouped[key] = { date: r.date, model: r.model, workspace: r.workspace, costType: r.costType, costUsd: 0, rowCount: 0 };
+    grouped[key].costUsd += r.costUsd;
+    grouped[key].rowCount++;
+  });
+  let groupedArr = Object.values(grouped);
+
+  groupedArr.sort((a, b) => {
+    if (STATE.apiSortBy === 'cost') return STATE.apiSortDir === 'desc' ? b.costUsd - a.costUsd : a.costUsd - b.costUsd;
+    if (STATE.apiSortBy === 'date') return STATE.apiSortDir === 'desc' ? b.date.localeCompare(a.date) : a.date.localeCompare(b.date);
+    if (STATE.apiSortBy === 'model') return STATE.apiSortDir === 'desc' ? b.model.localeCompare(a.model) : a.model.localeCompare(b.model);
+    return 0;
+  });
+
+  // Model breakdown
+  const modelSpend = {};
+  filtered.forEach(r => { modelSpend[r.model] = (modelSpend[r.model] || 0) + r.costUsd; });
+  const modelData = Object.entries(modelSpend).sort((a,b) => b[1] - a[1]);
+  const maxModelSpend = modelData.length > 0 ? Math.max(...modelData.map(d => d[1])) : 1;
+
+  // API Key breakdown
+  const keySpend = {};
+  filtered.forEach(r => { keySpend[r.apiKey] = (keySpend[r.apiKey] || 0) + r.costUsd; });
+  const keyData = Object.entries(keySpend).sort((a,b) => b[1] - a[1]);
+  const maxKeySpend = keyData.length > 0 ? Math.max(...keyData.map(d => d[1])) : 1;
+
+  // Daily trend
+  const dailySpend = {};
+  filtered.forEach(r => { dailySpend[r.date] = (dailySpend[r.date] || 0) + r.costUsd; });
+  const dailyData = Object.entries(dailySpend).sort((a,b) => a[0].localeCompare(b[0]));
+  const maxDaily = dailyData.length > 0 ? Math.max(...dailyData.map(d => d[1])) : 1;
+
+  const keyColors = ['#131A48','#FF5800','#2563eb','#9333ea','#16a34a','#dc2626','#ca8a04'];
+
+  document.getElementById('tab-api').innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card accent"><div class="kpi-label">API Spend (MTD)</div><div class="kpi-value">${fmt(totalCost)}</div><div class="kpi-sub">${filtered.length} records · ${groupedArr.length} grouped</div></div>
+      <div class="kpi-card"><div class="kpi-label">Daily Average</div><div class="kpi-value">${fmt(dailyAvg)}</div><div class="kpi-sub">${uniqueDays} active days</div></div>
+      <div class="kpi-card"><div class="kpi-label">Models Used</div><div class="kpi-value">${uniqueModels}</div><div class="kpi-sub">Distinct models</div></div>
+      <div class="kpi-card"><div class="kpi-label">API Keys</div><div class="kpi-value">${uniqueKeys}</div><div class="kpi-sub">Active keys</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Filters</h2>
+      <div class="api-filters-row">
+        <div class="api-filter-group">
+          <label>Date</label>
+          <select onchange="setApiFilter('apiDateFilter', this.value)">
+            <option value="All"${STATE.apiDateFilter==='All'?' selected':''}>All Dates (${allDates.length})</option>
+            ${allDates.map(d => `<option value="${d}"${STATE.apiDateFilter===d?' selected':''}>${d}</option>`).join('')}
+          </select>
+        </div>
+        <div class="api-filter-group">
+          <label>Model</label>
+          <select onchange="setApiFilter('apiModelFilter', this.value)">
+            <option value="All"${STATE.apiModelFilter==='All'?' selected':''}>All Models</option>
+            ${allModels.map(m => `<option value="${m}"${STATE.apiModelFilter===m?' selected':''}>${m}</option>`).join('')}
+          </select>
+        </div>
+        <div class="api-filter-group">
+          <label>Workspace</label>
+          <select onchange="setApiFilter('apiWorkspaceFilter', this.value)">
+            <option value="All"${STATE.apiWorkspaceFilter==='All'?' selected':''}>All Workspaces</option>
+            ${allWorkspaces.map(w => `<option value="${w}"${STATE.apiWorkspaceFilter===w?' selected':''}>${w}</option>`).join('')}
+          </select>
+        </div>
+        <div class="api-filter-group">
+          <label>Cost Type</label>
+          <select onchange="setApiFilter('apiCostTypeFilter', this.value)">
+            <option value="All"${STATE.apiCostTypeFilter==='All'?' selected':''}>All Types</option>
+            ${allCostTypes.map(c => `<option value="${c}"${STATE.apiCostTypeFilter===c?' selected':''}>${c}</option>`).join('')}
+          </select>
+        </div>
+        <div class="api-filter-group">
+          <label>&nbsp;</label>
+          <button class="filter-btn" onclick="resetApiFilters()" style="padding:5px 14px">Reset All</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="two-col">
+      <div class="panel" style="margin-bottom:0">
+        <h2>Spend by Model</h2>
+        ${modelData.map(([model, spend]) => `<div class="bar-row"><div class="bar-label"><span>${model}</span><span>${fmt(spend)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${(spend/maxModelSpend)*100}%;background:${MODEL_COLORS[model]||'#999'}"></div></div></div>`).join('')}
+        ${modelData.length === 0 ? '<div style="color:#CECECE;font-size:12px;text-align:center;padding:20px 0">No data</div>' : ''}
+      </div>
+      <div class="panel" style="margin-bottom:0">
+        <h2>Spend by API Key</h2>
+        ${keyData.map(([key, spend], i) => `<div class="bar-row"><div class="bar-label"><span>${key}</span><span>${fmt(spend)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${(spend/maxKeySpend)*100}%;background:${keyColors[i%keyColors.length]}"></div></div></div>`).join('')}
+        ${keyData.length === 0 ? '<div style="color:#CECECE;font-size:12px;text-align:center;padding:20px 0">No data</div>' : ''}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Daily Spend Trend</h2>
+      ${dailyData.map(([date, spend]) => `<div class="bar-row"><div class="bar-label"><span>${date}</span><span>${fmt(spend)}</span></div><div class="bar-track"><div class="bar-fill" style="width:${(spend/maxDaily)*100}%;background:var(--navy)"></div></div></div>`).join('')}
+      ${dailyData.length === 0 ? '<div style="color:#CECECE;font-size:12px;text-align:center;padding:20px 0">No data</div>' : ''}
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin-bottom:0">Grouped Usage Detail</h2>
+        <div style="font-size:11px;color:#5A5A5A">${groupedArr.length} groups from ${filtered.length} records</div>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th class="sortable" onclick="toggleApiSort('date')">Date ${STATE.apiSortBy==='date'?(STATE.apiSortDir==='desc'?'▼':'▲'):''}</th>
+            <th class="sortable" onclick="toggleApiSort('model')">Model ${STATE.apiSortBy==='model'?(STATE.apiSortDir==='desc'?'▼':'▲'):''}</th>
+            <th>Workspace</th>
+            <th>Cost Type</th>
+            <th class="right sortable" onclick="toggleApiSort('cost')">Cost (USD) ${STATE.apiSortBy==='cost'?(STATE.apiSortDir==='desc'?'▼':'▲'):''}</th>
+            <th class="right">Rows</th>
+          </tr></thead>
+          <tbody>
+            ${groupedArr.map(g => `<tr>
+                <td style="color:#5A5A5A">${g.date}</td>
+                <td><span style="color:${MODEL_COLORS[g.model]||'#666'};font-weight:500">${g.model}</span></td>
+                <td>${g.workspace}</td>
+                <td><span class="tag ${g.costType==='token'?'tag-token':'tag-websearch'}">${g.costType}</span></td>
+                <td class="right spend-val">${fmt4(g.costUsd)}</td>
+                <td class="right" style="color:#CECECE">${g.rowCount}</td>
+              </tr>`).join('')}
+            <tr class="sum-row">
+              <td>TOTAL</td><td></td><td></td><td></td>
+              <td class="right" style="color:#FF5800;font-family:var(--font-h);font-size:16px">${fmt(totalCost)}</td>
+              <td class="right" style="font-size:11px;color:#5A5A5A">${filtered.length}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      ${groupedArr.length === 0 ? '<div style="text-align:center;padding:30px 0;color:#CECECE;font-size:13px">No records match the selected filters.</div>' : ''}
+    </div>
+  `;
 }
 
 // ─── EVENT HANDLERS ─────────────────────────────────────────────────────────────
@@ -603,6 +742,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     STATE.activeTab = btn.dataset.tab;
     document.getElementById('tab-usage').style.display = STATE.activeTab === 'usage' ? '' : 'none';
     document.getElementById('tab-investment').style.display = STATE.activeTab === 'investment' ? '' : 'none';
+    document.getElementById('tab-api').style.display = STATE.activeTab === 'api' ? '' : 'none';
     render();
   });
 });
@@ -620,6 +760,19 @@ function toggleSort(col) {
 function toggleShowAll() { STATE.showAll = !STATE.showAll; render(); }
 function setBillingDate(v) { STATE.billingDateFilter = v; render(); }
 function setBillingType(v) { STATE.billingTypeFilter = v; render(); }
+function toggleBillingSort() { STATE.billingSortDir = STATE.billingSortDir === 'desc' ? 'asc' : 'desc'; render(); }
+
+function setApiFilter(key, val) { STATE[key] = val; renderApiTab(); }
+function resetApiFilters() {
+  STATE.apiDateFilter = 'All'; STATE.apiModelFilter = 'All';
+  STATE.apiWorkspaceFilter = 'All'; STATE.apiCostTypeFilter = 'All';
+  renderApiTab();
+}
+function toggleApiSort(col) {
+  if (STATE.apiSortBy === col) STATE.apiSortDir = STATE.apiSortDir === 'desc' ? 'asc' : 'desc';
+  else { STATE.apiSortBy = col; STATE.apiSortDir = 'desc'; }
+  renderApiTab();
+}
 
 // ─── INIT ───────────────────────────────────────────────────────────────────────
 loadData();
